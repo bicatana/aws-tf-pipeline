@@ -41,7 +41,7 @@ podTemplate(cloud: "kubernetes", containers: [
             }
             //Setup the AWS credentials
             stage('Set AWS Credentials') {
-                container('azurecli'){
+                container('terraform'){
                     try {
                         sh """
                             mkdir ~/.aws
