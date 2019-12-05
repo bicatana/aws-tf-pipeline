@@ -1,4 +1,4 @@
-FROM terraform:latest
+FROM hashicorp/terraform:latest
 
 ADD src /terraform
 
