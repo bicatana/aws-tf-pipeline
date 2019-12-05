@@ -44,9 +44,9 @@ podTemplate(cloud: "kubernetes", containers: [
                 container('terraform'){
                     try {
                         sh """
+                            set +x
                             mkdir ~/.aws
                             echo '$AWS_CREDENTIALS_FILE' > ~/.aws/credentials
-                            cat ~/.aws/credentials
                         """
                     }
                     catch (exc) {
