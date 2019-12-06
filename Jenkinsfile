@@ -50,7 +50,7 @@ podTemplate(cloud: "kubernetes", containers: [
                         """
                     }
                     catch (exc) {
-                        println "Failed the Azure Steps - ${currentBuild.fullDisplayName}"
+                        println "Failed the AWS Steps - ${currentBuild.fullDisplayName}"
                         throw(exc)
                     }
                 }

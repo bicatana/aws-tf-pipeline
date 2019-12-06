@@ -1,0 +1,96 @@
+#!groovy
+
+podTemplate(cloud: "kubernetes", containers: [
+    containerTemplate(name: 'jnlp', image: 'jenkinsci/jnlp-slave:alpine', ttyEnabled: true, alwaysPullImage: true),
+    //Change the image link below accordingly when renaming the image in the original pipeline
+    containerTemplate(name: 'deployment', image: "bicatana/k8s:terraform", ttyEnabled: true, command: 'cat', alwaysPullImage: true)
+]) {
+    node(POD_LABEL) {
+        //Terraform deployment folder path setup
+        env.TF_PATH = "/terraform"
+        //Vault Configuration
+        def configuration = [vaultUrl: 'http://10.100.36.190:8200',
+                            vaultCredentialId: 'vault-token', engineVersion: 1]
+        //Define Required Secrets and Env Variables
+        def secrets = [
+            [path: 'kv/docker', secretValues: [
+                [envVar: 'DOCKER_CONFIG_FILE', vaultKey: 'config']]],
+            [path: 'kv/aws', secretValues: [
+                [envVar: 'AWS_CREDENTIALS_FILE', vaultKey: 'credentials']]]
+        ]
+        //Use the Credentials with the Build
+        withVault([configuration: configuration, vaultSecrets: secrets]) {
+            //Ensure that the Workspace is ready for the pipeline
+            stage('Check Workspace&Plan') {
+                container('deployment'){
+                    try {
+                        sh """
+                            cd $TF_PATH
+                            terraform -v
+                            terraform show -json terraform.plan | jq
+                        """
+                    }
+                    catch (exc) {
+                        println "Failed the Workspace Check - ${currentBuild.fullDisplayName}"
+                        throw(exc)
+                    }
+                }
+            }
+            //Manual Approval Step before deploying
+            stage('Approve Deployment') {
+                try {
+                    timeout(time:5, unit:'MINUTES') {
+                        env.APPROVE_DEPLOY = input message: 'Should the Terraform Plan go ahead?', ok: 'Continue',
+                            parameters: [choice(name: 'APPROVE_DEPLOY', choices: ['YES','NO'], description: 'Should the Terraform Plan go ahead?')]
+                        if (env.APPROVE_DEPLOY == 'YES'){
+                            env.DPROD = true
+                        } else {
+                            env.DPROD = false
+                            //aborting the step as No was pressed
+                            currentBuild.result = 'ABORTED'
+                            error("Terraform Plan not going ahead.")
+                        }
+                    }
+                } 
+                catch (error) {
+                    //aborting in case of error
+                    env.DPROD = false
+                    currentBuild.result = 'ABORTED'
+                    error("Timeout has been reached! Deployment has been cancelled.")
+                }
+            }
+            //Setup the AWS credentials
+            stage('Set AWS Credentials') {
+                container('terraform'){
+                    try {
+                        sh """
+                            set +x
+                            mkdir ~/.aws
+                            echo '$AWS_CREDENTIALS_FILE' > ~/.aws/credentials
+                        """
+                    }
+                    catch (exc) {
+                        println "Failed the AWS Steps - ${currentBuild.fullDisplayName}"
+                        throw(exc)
+                    }
+                }
+            }
+            //Terraform Apply with -auto-approve as the plan was checked in the previous step
+            stage('Terraform Apply') {
+                container('deployment'){
+                    try {
+                        sh """
+                            cd $TF_PATH
+                            terraform -v
+                            terraform apply -auto-approve terraform.plan
+                        """
+                    }
+                    catch (exc) {
+                        println "Failed the Terraform Apply Step - ${currentBuild.fullDisplayName}"
+                        throw(exc)
+                    }
+                }
+            }
+        }
+    }
+}
