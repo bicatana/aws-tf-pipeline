@@ -1,6 +1,6 @@
 #!groovy
 
-podTemplate(cloud: "kubernetes", containers: [
+podTemplate(cloud: "kubernetes", imagePullSecrets: ['regcred'], containers: [
     containerTemplate(name: 'jnlp', image: 'jenkinsci/jnlp-slave:alpine', ttyEnabled: true, alwaysPullImage: true),
     //Change the image link below accordingly when renaming the image in the original pipeline
     containerTemplate(name: 'deployment', image: "bicatana/k8s:terraform", ttyEnabled: true, command: 'cat', alwaysPullImage: true)
@@ -20,11 +20,28 @@ podTemplate(cloud: "kubernetes", containers: [
         ]
         //Use the Credentials with the Build
         withVault([configuration: configuration, vaultSecrets: secrets]) {
+            //Setup the AWS credentials
+            stage('Set AWS Credentials') {
+                container('deployment'){
+                    try {
+                        sh """
+                            set +x
+                            mkdir ~/.aws
+                            echo '$AWS_CREDENTIALS_FILE' > ~/.aws/credentials
+                        """
+                    }
+                    catch (exc) {
+                        println "Failed the AWS Steps - ${currentBuild.fullDisplayName}"
+                        throw(exc)
+                    }
+                }
+            }
             //Ensure that the Workspace is ready for the pipeline
             stage('Check Workspace&Plan') {
                 container('deployment'){
                     try {
                         sh """
+                            set +x
                             cd $TF_PATH
                             terraform -v
                             terraform show -json terraform.plan | jq
@@ -57,22 +74,6 @@ podTemplate(cloud: "kubernetes", containers: [
                     env.DPROD = false
                     currentBuild.result = 'ABORTED'
                     error("Timeout has been reached! Deployment has been cancelled.")
-                }
-            }
-            //Setup the AWS credentials
-            stage('Set AWS Credentials') {
-                container('terraform'){
-                    try {
-                        sh """
-                            set +x
-                            mkdir ~/.aws
-                            echo '$AWS_CREDENTIALS_FILE' > ~/.aws/credentials
-                        """
-                    }
-                    catch (exc) {
-                        println "Failed the AWS Steps - ${currentBuild.fullDisplayName}"
-                        throw(exc)
-                    }
                 }
             }
             //Terraform Apply with -auto-approve as the plan was checked in the previous step
